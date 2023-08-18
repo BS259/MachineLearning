@@ -1,0 +1,12 @@
+knitr
+ggplot2
+lattice
+caret
+foreach
+iterators
+doParallel
+tibble
+bitops
+rattle
+jpeg
+patchwork

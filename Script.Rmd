@@ -1,0 +1,309 @@
+---
+title: "Modelling Weight Lifting Exercises Data"
+author: "Bhavneet Singh"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# Synopsis {.tabset}
+
+## About
+
+This project tries to fit a machine learning algorithm to the [Weight Lifting Exercises Data (WLE)](http://web.archive.org/web/20161224072740/http://groupware.les.inf.puc-rio.br/static/WLE/WearableComputing_weight_lifting_exercises_biceps_curl_variations.csv) for the purpose of predicting the type of exercise performed. The data for this project comes from barbell lifts done by 6 participants. There measurements are taken by devices like *Jawbone Up, Nike Fuelband, and Fitbit*.\
+More information about the [WLE Dataset](http://web.archive.org/web/20161224072740/http://groupware.les.inf.puc-rio.br/static/WLE/WearableComputing_weight_lifting_exercises_biceps_curl_variations.csv) can be found [here](http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har). See the section on the **weight lifting exercises dataset**.
+
+## Training Data
+
+The training data contains information on more than a hundred and fifty variables. It contains more than nineteen thousand samples of observations and can be downloaded from link given below.\
+[Training Dataset](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv)
+
+This dataset is used to create a model for this project.
+
+## Testing Data
+
+The testing data contains 20 samples of observations on more than a hundred and fifty variables. It is used to evaluate the out of sample error of the final machine learning algorithm for this project. It can be downoaded from the likn given below.\
+[Testing Dataset](https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv)
+
+# Pre-Processing {.tabset}
+
+## Reading In The Data
+
+We need to perform a little bit of exploratory data analysis on the training data before modelling it. Let's read it in first.
+
+```{r message=F, warning=F, cache=T}
+url_training <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+url_testing  <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+if(!file.exists('training.csv')){
+  download.file(url_training, destfile = 'training.csv')
+  download.file(url_testing, destfile = 'testing.csv')
+}
+
+training <- read.csv('training.csv')
+testing  <- read.csv('testing.csv')
+```
+
+Now that we have got our data, its time to explore it. According to the information provided the observations are taken by accelerometres placed at various locations, like arm, barbell, etc. The first seven variables are thus, not related to the outcome of interest here **((classe variable))**. So, its better to remove them.
+
+```{r message=F, warning=F, cache=T}
+# remove first 7 columns from training
+train <- training[ , -c(1:7)]
+# convert each column to class numeric
+for(i in 1:152){
+  train[, i] <- as.numeric(train[, i])
+}
+```
+
+## NA Values
+
+Some of the variables contain a large proportion of NA values which can be easily seen. These need to be removed as they don't contribute much to the model.
+
+```{r message=F, warning=F, cache=T}
+# Columns with less than 1000 non NA values removed
+train <- train[, (colSums(!is.na(train)) > 1000)]
+# look at the data
+library(knitr)
+knitr::kable(train[1:5, 1:5], caption = "First 5 Columns are now not empty")
+```
+
+## Correlated Variables
+
+```{r message=F, warning=F, cache=T}
+library(caret)
+# configure a correlation matrix of predictors
+corMat <- cor(train[, -53])
+# configure columns to remove
+corVars <- findCorrelation(corMat)
+# remove highly correlated variables
+train <- train[, -corVars]
+train_b <- train
+```
+
+## Selecting Features
+
+We have narrowed ourselves to *45* variables. We need to select only those variables that explains the variation to the maximum extent. For this we use **principal component analysis** to capture **95** percent of the variation.
+
+```{r message=F, warning=F, cache=T}
+library(caret)
+preProc <- preProcess(train[, -46], method = "pca")
+# remove columns vith low contribution to the variation
+train_a <- predict(preProc, train)
+train_a$classe <- as.factor(train$classe)
+```
+
+Now, we use this processed data to create a model.
+
+# Fitting the Model {.tabset}
+
+## Resampling Method
+
+Before fitting a model let's specify the resampling method and required parameters.
+
+```{r message=F, warning=F, cache=T}
+library(caret)
+# resampling method is Cross Validation with 10 folds
+fitControl <- trainControl(method = "cv", number = 10, allowParallel = T) # allow parallel processing
+```
+
+## Data Partition
+
+Split the data into training and testing sets.
+
+```{r message=F, warning=F, cache=T}
+library(caret)
+set.seed(420)
+inTrain <- createDataPartition(train_a$classe, p = .7, list = F)
+train <- train_a[inTrain, ]
+test <- train_a[-inTrain, ]
+```
+
+## RF
+
+Fit a random forest to the data.
+
+```{r message=F, warning=F, cache=T}
+library(caret)
+x <- train_a[, -1]
+y <- train_a[, 1]
+# fit the random forest fit 
+set.seed(920)
+rfFit <- train(x, y, method = "rf", trControl = fitControl)
+```
+
+Now we have a random forest fit that is done is such a small time using parallel processing. We can check the accuracy on the held out cross validation sets.
+
+```{r message=F, warning=F, cache=T}
+rfFit$resample
+confusionMatrix.train(rfFit)
+```
+
+Also on the held out test set.
+
+```{r message=F, warning=F, cache=T}
+confusionMatrix(predict(rfFit, test), test$classe)
+```
+
+## DT
+
+Next, we fit a decistion trees model to the data.
+
+```{r message=F, warning=F, cache=T}
+library(caret)
+# fit a decision tree model
+set.seed(920)
+dtFit <- train(x, y, method = "rpart", trControl = fitControl)
+
+# check it out
+library(rattle)
+fancyRpartPlot(dtFit$finalModel, palettes = c("Greys", "Oranges"), caption = "columns are named 'PC-col no.' becuase of PCA")
+```
+
+Let's see how this method performed. First, on the held out sets of resamples.
+
+```{r message=F, warning=F, cache=T}
+confusionMatrix.train(dtFit)
+```
+
+And then on the held out test set.
+
+```{r message=F, warning=F, cache=T}
+confusionMatrix(predict(dtFit, test), test$classe)
+```
+
+## GBM
+
+Next, we fit a GBM model to the data using parallel processing.
+
+```{r message=F, warning=F, cache=T}
+# fit a GBM model
+set.seed(920)
+gbmFit <- train(x, y, method = "gbm", verbose = F, trControl = fitControl)
+```
+
+Let's see how it performs. First, on the held out test sets in the folds.
+
+```{r message=F, warning=F, cache=T}
+confusionMatrix.train(gbmFit)
+```
+
+Second, on the held out test set.
+
+```{r message=F, warning=F, cache=T}
+confusionMatrix(predict(gbmFit, test), test$classe)
+```
+
+## SVM
+
+Next, we fit a SVM model to the data using parallel processing again.
+
+```{r message=F, warning=F, cache=T}
+# fit the svm model
+set.seed(920)
+svmFit <- train(x, y, method = "svmRadial", trControl = fitControl)
+```
+
+Let's see how the fit performs. First, on the held out test sets in folds.
+
+```{r message=F, warning=F, cache=T}
+confusionMatrix.train(svmFit)
+```
+
+Second, on the held out test set.
+
+```{r message=F, warning=F, cache=T}
+confusionMatrix(predict(svmFit, test), test$classe)
+```
+
+## RDA
+
+Lastly, let us fit a regularized discriminant analysis on the data.
+
+```{r message=F, warning=F, cache=T}
+# fit the RDA model
+set.seed(920)
+rdaFit <- train(x, y, method = "rda", trControl = fitControl)
+```
+
+Let's see how the model performs. First, on the held out test sets in the folds.
+
+```{r message=F, warning=F, cache=T}
+confusionMatrix.train(rdaFit)
+```
+
+Second, on the held out test set.
+
+```{r message=F, warning=F, cache=T}
+confusionMatrix(predict(rdaFit, test), test$classe)
+```
+
+# Performance {.tabset}
+
+## Across Folds
+
+```{r message=F, warning=F, cache=T}
+library(jpeg)
+library(ggplot2)
+library(patchwork)
+df <- rbind(rfFit$resample, dtFit$resample, gbmFit$resample, svmFit$resample, rdaFit$resample)
+df$Model <- c(rep("Random Forest", 10), rep("Decision Trees", 10), rep("Gradient Boosting Machine", 10), rep("Support Vector Machine", 10), rep("Regularized Discriminant Analysis", 10))
+
+# read in background
+img <- readJPEG('forest.jpg', native = T)
+
+# plot...
+g <- ggplot(df, aes(Resample, Accuracy))
+g <- g + geom_point(aes(color = Model), size = 4)
+g <- g + theme(legend.background = element_rect(fill = alpha('brown', .5)), legend.text = element_text(face = 'italic', family = 'serif', size = 14, colour = 'white'), legend.title = element_text(colour = 'white', size = 16), legend.key = element_rect(fill = alpha('white', .1), color = 'white'))
+g <- g + theme(panel.background = element_rect(fill = alpha('white', .1), colour = alpha('white', .1)))
+g <- g + theme(axis.text = element_text(colour = 'white', size = 12), axis.ticks = element_line(colour = alpha('green', .1)), axis.text.x = element_text(angle = 90), axis.title = element_text(face = c('italic', 'bold'), family = 'serif', size = 18, colour = 'white'))
+g <- g + theme(panel.grid.major = element_line(color = alpha('green', .1)))
+g <- g + inset_element(img, left = -.1, right = 1.1, top = 1.1, bottom = -.1, align_to = "full", on_top = F)
+g
+```  
+
+Random forests perform excellent and way better compared to other models. SVM also performs well.
+  
+## On the Test Set
+The accuracies on the test set have been computed already using the confusionMatrix() function. Best performing model is **Random Forest** with an accuracy of 1, i.e. an error rate of **zero percent**.  
+Since random forests performed so well, we don't need to create an ensemble of models. RF is enough. We are gonna use it to predict the validation set of 20 samples.  
+
+## Validation Set
+Now, for the final part we are going to predict the validation set (20 samples) using the random forest approach.
+```{r message=F, warning=F, cache=T, error=T}
+# preprocess the testing data
+testing <- testing[,-c(1:7)]
+for(i in 1:152){
+  testing[, i] <- as.numeric(testing[, i])
+}
+testing <- testing[, (colSums(!is.na(testing)) > 0)]
+testing <- testing[, -corVars]
+preProc2 <- preProcess(testing, method = "pca")
+testing <- predict(preProc2, testing)
+# predict
+predict(rfFit, testing)
+```  
+This gives an error becuase the principal component analysis gave 12 components in the case of validation set. These were 25 while fitting a model in on the train dataset.  
+So, we are going to refit the RF fit to the train set but with 12 components this time.
+```{r message=F, warning=F, cache=T}
+preProc_modified <- preProcess(train_b, method = "pca", pcaComp = 12)
+train_b <- predict(preProc_modified, train_b)
+train_b$classe <- as.factor(train_b$classe)
+train_b <- train_b[inTrain, ]
+test_b <- train_b[-inTrain, ]
+x <- train_b[ , -1]
+y <- train_b[ , 1]
+
+# RF fit
+set.seed(920)
+rfFit_modified <- train(x, y, method = "rf", trControl = fitControl)
+
+# Does it still perform good?
+confusionMatrix.train(rfFit_modified)
+confusionMatrix(predict(rfFit_modified, test_b), test_b$classe)
+```  
+Yep, still got it.
+```{r message=F, warning=F, cache=T}
+# Now, predict the validation set
+testing$classe <- NA
+predict(rfFit_modified, testing)
+```
